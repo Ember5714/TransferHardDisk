@@ -7,8 +7,8 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen" alt="Node">
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
   <img src="https://img.shields.io/badge/react-18-61dafb" alt="React">
+  <a href="https://space.bilibili.com/3493086938270254?spm_id_from=333.1007.0.0" rel="nofollow"><img src="https://camo.githubusercontent.com/a42383c7f8a16a2bfe5a7524fba26377a344f0a82fa8cb17e98febd2d345daac/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f2545352538412541382545362538302538312d42696c6942696c692d3030413444423f7374796c653d666c6174266c6162656c436f6c6f723d343434343434266c6f676f53697a653d6175746f" alt="哔哩哔哩" data-canonical-src="https://img.shields.io/badge/%E5%8A%A8%E6%80%81-BiliBili-00A4DB?style=flat&amp;labelColor=444444&amp;logoSize=auto" style="max-width: 100%;" _mstalt="9603386" _msthash="1376"></a>
 </p>
 
 A self-hosted file server built with Node.js + React. Multi-user with email verification, private/public repositories, user search, personal profiles, dark mode, and CLI management.
