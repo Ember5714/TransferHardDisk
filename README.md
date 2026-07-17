@@ -1,8 +1,8 @@
 # Transfer Hard Disk
 
 <p align="center">
-  <strong>LAN File Transfer &amp; Sharing Platform</strong><br>
-  局域网文件传输与共享平台
+  <strong>File Transfer &amp; Sharing Platform</strong><br>
+  文件传输与共享平台
 </p>
 
 <p align="center">
@@ -11,9 +11,9 @@
   <img src="https://img.shields.io/badge/react-18-61dafb" alt="React">
 </p>
 
-A self-hosted LAN file server built with Node.js + React. Multi-user with email verification, private/public repositories, user search, personal profiles, dark mode, and CLI management.
+A self-hosted file server built with Node.js + React. Multi-user with email verification, private/public repositories, user search, personal profiles, dark mode, and CLI management.
 
-基于 Node.js + React 的局域网网盘应用。支持多用户注册登录、邮箱验证、私密/公开仓库、用户搜索、个人主页、暗色主题、CLI 管理。
+基于 Node.js + React 的网盘应用。支持多用户注册登录、邮箱验证、私密/公开仓库、用户搜索、个人主页、暗色主题、CLI 管理。
 
 ## Features / 功能
 
