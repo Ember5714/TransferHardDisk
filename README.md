@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://space.bilibili.com/3493086938270254"><img src="https://img.shields.io/badge/bilibili-00A1D6?logo=bilibili&logoColor=white" alt="Bilibili"></a>
-  <a href="https://www.douyin.com/user/MS4wLjABAAAARFMQwKlxUI_B0j0cQwzbeJbZKuBI5QuyesZLXgKdD1w"><img src="https://img.shields.io/badge/douyin-000000?logo=tiktok&logoColor=white" alt="Douyin"></a>
+  <a href="https://www.douyin.com/user/MS4wLjABAAAARFMQwKlxUI_B0j0cQwzbeJbZKuBI5QuyesZLXgKdD1w"><img src="https://img.shields.io/badge/douyin-000000?logo=tiktok&logoColor=white" alt="抖音（Douyin）"></a>
 </p>
 
 ---
