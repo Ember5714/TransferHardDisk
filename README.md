@@ -1,13 +1,18 @@
 # Transfer Hard Disk
 
 <p align="center">
-  <strong>File Transfer &amp; Sharing Platform</strong>
+  <strong>LAN File Transfer &amp; Sharing Platform</strong>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen" alt="Node">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
   <img src="https://img.shields.io/badge/react-18-61dafb" alt="React">
-  <a href="https://space.bilibili.com/3493086938270254/dynamic" rel="nofollow"><img src="https://camo.githubusercontent.com/a42383c7f8a16a2bfe5a7524fba26377a344f0a82fa8cb17e98febd2d345daac/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f2545352538412541382545362538302538312d42696c6942696c692d3030413444423f7374796c653d666c6174266c6162656c436f6c6f723d343434343434266c6f676f53697a653d6175746f" alt="哔哩哔哩" data-canonical-src="https://img.shields.io/badge/%E5%8A%A8%E6%80%81-BiliBili-00A4DB?style=flat&amp;labelColor=444444&amp;logoSize=auto" style="max-width: 100%;" _mstalt="9603386" _msthash="1376"></a>
+</p>
+
+<p align="center">
+  <a href="https://space.bilibili.com/3493086938270254"><img src="https://img.shields.io/badge/bilibili-00A1D6?logo=bilibili&logoColor=white" alt="Bilibili"></a>
+  <a href="https://www.douyin.com/user/MS4wLjABAAAARFMQwKlxUI_B0j0cQwzbeJbZKuBI5QuyesZLXgKdD1w"><img src="https://img.shields.io/badge/douyin-000000?logo=tiktok&logoColor=white" alt="Douyin"></a>
 </p>
 
 ---
@@ -18,7 +23,7 @@
 
 ## English
 
-A self-hosted file server built with Node.js + React. Think of it as your personal Dropbox that runs on your own machine — accessible by anyone on the same network without uploading anything to the cloud.
+A self-hosted LAN file server built with Node.js + React. Think of it as your personal Dropbox that runs on your own machine — accessible by anyone on the same network without uploading anything to the cloud.
 
 ### Features
 
@@ -239,11 +244,16 @@ Default limit is 500 files per batch. Set `MAX_FILE_COUNT=2000` to increase it, 
 **Can't access from the internet?**
 Forward port 3000 on your router, or use the built-in frp tunnel (see Public Access above).
 
+### Links
+
+- Bilibili: [@Ember5714](https://space.bilibili.com/3493086938270254)
+- Douyin: [@Ember5714](https://www.douyin.com/user/MS4wLjABAAAARFMQwKlxUI_B0j0cQwzbeJbZKuBI5QuyesZLXgKdD1w)
+
 ---
 
 ## 简体中文
 
-基于 Node.js + React 构建的文件共享平台。部署在本地主机上，同一局域网内的所有设备均可通过浏览器直接访问，无需将文件上传至任何第三方云端服务。
+基于 Node.js + React 构建的局域网文件共享平台。部署在本地主机上，同一局域网内的所有设备均可通过浏览器直接访问，无需将文件上传至任何第三方云端服务。
 
 ### 功能特性
 
@@ -464,11 +474,16 @@ netsh advfirewall firewall add rule name="TransferHardDisk-Port" dir=in action=a
 **外网无法访问？**
 请在路由器中配置 3000 端口转发，或使用内置 frp 内网穿透方案（参见上文公网访问章节）。
 
+### 相关链接
+
+- 哔哩哔哩: [@Ember5714](https://space.bilibili.com/3493086938270254)
+- 抖音: [@Ember5714](https://www.douyin.com/user/MS4wLjABAAAARFMQwKlxUI_B0j0cQwzbeJbZKuBI5QuyesZLXgKdD1w)
+
 ---
 
 ## 繁體中文
 
-基於 Node.js + React 構建的檔案分享平台。部署於本機上，同一區域網路內的所有裝置均可透過瀏覽器直接存取，無需將檔案上傳至任何第三方雲端服務。
+基於 Node.js + React 構建的區域網路檔案分享平台。部署於本機上，同一區域網路內的所有裝置均可透過瀏覽器直接存取，無需將檔案上傳至任何第三方雲端服務。
 
 ### 功能特性
 
@@ -688,3 +703,8 @@ netsh advfirewall firewall add rule name="TransferHardDisk-Port" dir=in action=a
 
 **外網無法存取？**
 請在路由器中設定 3000 埠轉發，或使用內建 frp 內網穿透方案（參見上文公網存取章節）。
+
+### 相關連結
+
+- 嗶哩嗶哩: [@@Ember5714](https://space.bilibili.com/3493086938270254)
+- 抖音: [@Ember5714](https://www.douyin.com/user/MS4wLjABAAAARFMQwKlxUI_B0j0cQwzbeJbZKuBI5QuyesZLXgKdD1w)
