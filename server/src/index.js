@@ -577,6 +577,9 @@ server.listen(config.PORT, '0.0.0.0', async () => {
   console.log('  \\\\\/__/\\\\\\\\\\\\\\\\{~}\\\\\\\\\\\\\\{~}\\\\\\\\\\\\\\#\\\\\\\\\\\\&\\\\\\\\\\\\\\\\\\\\\\\\\\\\ ');
   console.log('  \\\/__/\\\\\\\\\\\\\\\\{~}\\\\\\\\\\\\\\{~}\\\\\\\\\\\\\\!&&&&&&7\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\');
   console.log('========================================');
+  console.log('  如有问题请投递至ember5714@outlook.com');
+  console.log('  For inquiries, please email ember5714@outlook.com');
+  console.log('========================================');
   console.log(`  Device  : ${config.DEVICE_NAME}`);
   console.log(`  Port    : ${config.PORT}`);
   console.log(`  Storage : ${config.UPLOAD_DIR}`);
