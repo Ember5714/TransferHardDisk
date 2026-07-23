@@ -253,7 +253,7 @@ Forward port 3000 on your router, or use the built-in frp tunnel (see Public Acc
 
 ## 简体中文
 
-基于 Node.js + React 构建的局域网文件共享平台。部署在本地主机上，同一局域网内的所有设备均可通过浏览器直接访问，无需将文件上传至任何第三方云端服务。
+基于 Node.js + React 构建的文件共享平台.
 
 ### 功能特性
 
