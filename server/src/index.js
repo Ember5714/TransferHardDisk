@@ -17,6 +17,8 @@ const repoCli = require('./repo-cli');
 const discovery = require('./discovery');
 const fileServer = require('./fileServer');
 const wsServer = require('./wsServer');
+const rateLimit = require('./rateLimit');
+// const fileLock = require('./fileLock');
 
 const app = express();
 const server = http.createServer(app);
@@ -105,9 +107,35 @@ function getLanIPs() {
 
 // ============ 中间件 ============
 app.set('trust proxy', true);
-app.use(cors());
+app.disable('x-powered-by');
+
+// CORS：限制为局域网 + 本机来源
+const corsOrigin = (origin, callback) => {
+  if (!origin) return callback(null, true);
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true);
+  if (/^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(origin)) return callback(null, true);
+  callback(null, false);
+};
+app.use(cors({ origin: corsOrigin }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true, limit: '10gb' }));
+
+// 全局路径参数净化：防止路径穿越（含 URL 解码，防 %2e%2e%2f 绕过）
+app.use((req, res, next) => {
+  const sanitize = (val) => {
+    if (typeof val !== 'string') return val;
+    // 先 URL 解码再检查，防止 %2e%2e%2f 等编码绕过
+    let decoded;
+    try { decoded = decodeURIComponent(val); } catch { decoded = val; }
+    return decoded.split('/').filter(s => s && s !== '..' && s !== '.').join('/');
+  };
+  if (req.query && req.query.path) req.query.path = sanitize(req.query.path);
+  if (req.query && req.query.dir)  req.query.dir  = sanitize(req.query.dir);
+  if (req.body  && req.body.path)  req.body.path  = sanitize(req.body.path);
+  if (req.body  && req.body.dir)   req.body.dir   = sanitize(req.body.dir);
+  if (req.body  && req.body.filePath) req.body.filePath = sanitize(req.body.filePath);
+  next();
+});
 
 // 全局认证（所有 API 和前端页面）
 app.use(auth);
@@ -119,12 +147,19 @@ app.post('/api/auth/register', async (req, res) => {
   if (!config.REGISTRATION_OPEN) {
     return res.status(403).json({ error: '注册已关闭' });
   }
+  const ip = rateLimit.getIP(req);
+  if (rateLimit.check(ip, 'register')) {
+    return res.status(429).json({ error: '注册过于频繁，请稍后再试' });
+  }
   const { email, username, password } = req.body;
   if (!email || !username || !password) {
     return res.status(400).json({ error: '请填写完整信息' });
   }
-  if (password.length < 6) {
-    return res.status(400).json({ error: '密码至少 6 位' });
+  if (password.length < 8) {
+    return res.status(400).json({ error: '密码至少 8 位' });
+  }
+  if (!/[a-zA-Z]/.test(password) || !/\d/.test(password)) {
+    return res.status(400).json({ error: '密码必须包含字母和数字' });
   }
   const result = await userSystem.register({ email, username, password });
   if (result.error) return res.status(400).json({ error: result.error });
@@ -133,15 +168,26 @@ app.post('/api/auth/register', async (req, res) => {
 
 // 验证邮箱
 app.post('/api/auth/verify', async (req, res) => {
+  const ip = rateLimit.getIP(req);
+  if (rateLimit.check(ip, 'verify')) {
+    return res.status(429).json({ error: '验证过于频繁，请稍后再试' });
+  }
   const { email, code } = req.body;
   if (!email || !code) return res.status(400).json({ error: '缺少参数' });
   const result = await userSystem.verify(email, code);
-  if (!result.success) return res.status(400).json({ error: result.error });
+  if (!result.success) {
+    rateLimit.recordLoginFailure(ip);
+    return res.status(400).json({ error: result.error });
+  }
   res.json({ success: true });
 });
 
 // 重新发送验证码
 app.post('/api/auth/resend', async (req, res) => {
+  const ip = rateLimit.getIP(req);
+  if (rateLimit.check(ip, 'resend')) {
+    return res.status(429).json({ error: '发送过于频繁，请稍后再试' });
+  }
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: '缺少邮箱' });
   const result = await userSystem.resendCode(email);
@@ -151,11 +197,32 @@ app.post('/api/auth/resend', async (req, res) => {
 
 // 登录
 app.post('/api/auth/login', async (req, res) => {
+  const ip = rateLimit.getIP(req);
+  const delay = rateLimit.getLoginDelay(ip);
+  if (delay > 0) {
+    return res.status(429).json({ error: `登录失败次数过多，请 ${Math.ceil(delay / 1000)} 秒后再试` });
+  }
+  if (rateLimit.check(ip, 'login')) {
+    return res.status(429).json({ error: '登录过于频繁，请稍后再试' });
+  }
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: '请填写邮箱和密码' });
   const result = await userSystem.login(email, password);
-  if (!result.success) return res.status(401).json({ error: result.error });
-  res.json({ token: result.token, user: result.user });
+  if (!result.success) {
+    rateLimit.recordLoginFailure(ip);
+    return res.status(401).json({ error: result.error });
+  }
+  rateLimit.resetLoginFailures(ip);
+  res.json({ token: result.token, refreshToken: result.refreshToken, user: result.user });
+});
+
+// 刷新 Token
+app.post('/api/auth/refresh', async (req, res) => {
+  const { refreshToken } = req.body;
+  if (!refreshToken) return res.status(400).json({ error: '缺少 refreshToken' });
+  const result = await userSystem.refreshToken(refreshToken);
+  if (!result) return res.status(401).json({ error: 'refreshToken 无效或已过期' });
+  res.json(result);
 });
 
 // 登出
@@ -247,12 +314,15 @@ app.delete('/api/auth/account', async (req, res) => {
   res.json({ success: true });
 });
 
-// 发送找回密码验证码
+// 发送找回密码验证码（统一返回 success 防止邮箱枚举）
 app.post('/api/auth/send-reset-code', async (req, res) => {
+  const ip = rateLimit.getIP(req);
+  if (rateLimit.check(ip, 'resend')) {
+    return res.status(429).json({ error: '发送过于频繁，请稍后再试' });
+  }
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: '请输入邮箱' });
   const result = await userSystem.sendResetCode(email);
-  if (!result.success) return res.status(400).json({ error: result.error });
   res.json({ success: true, smtpSent: result.smtpSent });
 });
 
@@ -298,26 +368,19 @@ app.get('/api/self', (req, res) => {
   });
 });
 
-// 诊断
+// 诊断（需登录，仅显示本机摘要信息）
 app.get('/api/diagnose', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '未登录' });
   res.json({
-    self: { id: config.DEVICE_ID, name: config.DEVICE_NAME, port: config.PORT },
-    network: discovery.getNetworkInfo(),
-    devices: discovery.getDevices(),
+    self: { name: config.DEVICE_NAME, port: config.PORT },
     wsClients: wsServer.getClientCount(),
-    authEnabled: !!(config.AUTH_USER && config.AUTH_PASS),
   });
 });
 
-// 公网连通性诊断（无需登录，用于验证端口转发是否正常）
+// 公网连通性诊断（需登录）
 app.get('/api/ping', (req, res) => {
-  res.json({
-    ok: true,
-    time: Date.now(),
-    remoteIP: req.ip || req.socket.remoteAddress,
-    host: req.hostname,
-    server: config.DEVICE_NAME,
-  });
+  if (!req.user) return res.status(401).json({ error: '未登录' });
+  res.json({ ok: true, time: Date.now() });
 });
 
 // ============ 个人信息 ============
@@ -354,16 +417,18 @@ app.post('/api/auth/profile-background', bgUpload.single('background'), async (r
   }
 });
 
-// 获取他人个人简介
+// 获取他人个人简介（需登录）
 app.get('/api/users/:userId/profile/bio', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '未登录' });
   const targetUser = await userSystem.getUserById(req.params.userId);
   if (!targetUser) return res.status(404).json({ error: '用户不存在或未公开' });
   const bio = await userSystem.getProfileBio(req.params.userId);
   res.json({ bio, username: targetUser.username, avatar: targetUser.avatar });
 });
 
-// 获取他人完整个人信息
+// 获取他人完整个人信息（需登录）
 app.get('/api/users/:userId/profile', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '未登录' });
   const targetUser = await userSystem.getUserById(req.params.userId);
   if (!targetUser) return res.status(404).json({ error: '用户不存在或未公开' });
   const bio = await userSystem.getProfileBio(req.params.userId);
@@ -394,8 +459,9 @@ app.get('/api/files/browse', async (req, res) => {
   }
 });
 
-// 浏览他人公开文件
+// 浏览他人公开文件（需登录）
 app.get('/api/users/:userId/public/browse', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '未登录' });
   const targetUser = await userSystem.getUserById(req.params.userId);
   if (!targetUser) return res.status(404).json({ error: '用户不存在或未公开' });
   try {
@@ -475,8 +541,9 @@ app.get('/api/files/download', (req, res) => {
   }
 });
 
-// 下载他人公开文件
+// 下载他人公开文件（需登录）
 app.get('/api/users/:userId/public/download', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '未登录' });
   const targetUser = await userSystem.getUserById(req.params.userId);
   if (!targetUser) return res.status(404).json({ error: '用户不存在或未公开' });
   const filePath = req.query.path;
@@ -495,9 +562,76 @@ app.get('/api/users/:userId/public/download', async (req, res) => {
   }
 });
 
+// 加密下载自己的文件（压缩+AES加密，密钥先于文件体发送）
+app.get('/api/files/download-encrypted', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '未登录' });
+  const filePath = req.query.path;
+  const visibility = req.query.visibility || 'private';
+  if (!filePath) return res.status(400).json({ error: '缺少文件路径' });
+  try {
+    const download = fileServer.createEncryptedDownloadStream(req.user.id, visibility, filePath);
+    res.set({
+      'Content-Type': 'application/octet-stream',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(download.fileName)}`,
+      'X-Enc-Key': download.keyB64,
+      'X-Enc-IV': download.ivB64,
+      'X-Enc-Original-Name': encodeURIComponent(download.fileName),
+    });
+    download.stream.pipe(res);
+    download.stream.on('error', (err) => {
+      console.error('[EncDownload] error:', err.message);
+      if (!res.headersSent) res.status(500).json({ error: err.message });
+    });
+  } catch (err) {
+    res.status(404).json({ error: err.message });
+  }
+});
+
+// 加密下载他人公开文件（需登录）
+app.get('/api/users/:userId/public/download-encrypted', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: '未登录' });
+  const targetUser = await userSystem.getUserById(req.params.userId);
+  if (!targetUser) return res.status(404).json({ error: '用户不存在或未公开' });
+  const filePath = req.query.path;
+  if (!filePath) return res.status(400).json({ error: '缺少文件路径' });
+  try {
+    const download = fileServer.createEncryptedDownloadStream(req.params.userId, 'public', filePath);
+    res.set({
+      'Content-Type': 'application/octet-stream',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(download.fileName)}`,
+      'X-Enc-Key': download.keyB64,
+      'X-Enc-IV': download.ivB64,
+      'X-Enc-Original-Name': encodeURIComponent(download.fileName),
+    });
+    download.stream.pipe(res);
+    download.stream.on('error', (err) => {
+      console.error('[EncDownload] error:', err.message);
+      if (!res.headersSent) res.status(500).json({ error: err.message });
+    });
+  } catch (err) {
+    res.status(404).json({ error: err.message });
+  }
+});
+
+// ============ 上传冷却计时
+const UPLOAD_COOLDOWN = 60 * 1000; // 60 秒
+const lastUploadTime = new Map(); // userId -> timestamp
+
 const upload = fileServer.createUploadHandler();
 app.post('/api/files/upload', upload.array('files', config.MAX_FILE_COUNT), (req, res) => {
   if (!req.user) return res.status(401).json({ error: '未登录' });
+
+  // 上传冷却检查
+  const now = Date.now();
+  const lastTime = lastUploadTime.get(req.user.id) || 0;
+  const remaining = Math.ceil((UPLOAD_COOLDOWN - (now - lastTime)) / 1000);
+  if (remaining > 0) {
+    return res.status(429).json({
+      error: `上传冷却中，请 ${remaining} 秒后再试`,
+      remaining,
+    });
+  }
+
   if (!req.files || req.files.length === 0) {
     return res.status(400).json({ error: '没有选择文件' });
   }
@@ -507,6 +641,10 @@ app.post('/api/files/upload', upload.array('files', config.MAX_FILE_COUNT), (req
   const totalSize = files.reduce((s, f) => s + f.size, 0);
   console.log(`[Upload] ${req.user.username} 上传 ${files.length} 个文件 (${(totalSize / 1024 / 1024).toFixed(2)} MB)`);
   wsServer.sendFileReceived({ name: `${files.length} 个文件`, size: totalSize });
+
+  // 记录本次上传时间
+  lastUploadTime.set(req.user.id, now);
+
   res.json({ success: true, files });
 });
 
@@ -562,8 +700,25 @@ registerFirewall();
 // 预先获取公网 IP（并行于服务器启动）
 const publicIPPromise = getPublicIP();
 
-server.listen(config.PORT, '0.0.0.0', async () => {
+// 处理端口占用等错误
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[ERROR] Port ${config.PORT} is already in use.`);
+    console.error(`        Stop the other process or use: netstat -ano | findstr :${config.PORT}`);
+    console.error(`        Then: taskkill /PID <PID> /F`);
+    process.exit(1);
+  } else {
+    console.error('[ERROR] Server error:', err.message);
+    process.exit(1);
+  }
+});
+
+server.listen(config.PORT, config.BIND_ADDRESS, async () => {
   await userSystem.init();
+
+  // 锁定仓库文件防止外部篡改（暂时禁用，ACL 修复后重新启用）
+  // fileLock.init(config.ROOT_DIR);
+
   const lanIPs = getLanIPs();
   const publicIP = await publicIPPromise;
 
@@ -577,13 +732,10 @@ server.listen(config.PORT, '0.0.0.0', async () => {
   console.log('  \\\\\/__/\\\\\\\\\\\\\\\\{~}\\\\\\\\\\\\\\{~}\\\\\\\\\\\\\\#\\\\\\\\\\\\&\\\\\\\\\\\\\\\\\\\\\\\\\\\\ ');
   console.log('  \\\/__/\\\\\\\\\\\\\\\\{~}\\\\\\\\\\\\\\{~}\\\\\\\\\\\\\\!&&&&&&7\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\');
   console.log('========================================');
-  console.log('  如有问题请投递至ember5714@outlook.com');
-  console.log('  For inquiries, please email ember5714@outlook.com');
-  console.log('========================================');
   console.log(`  Device  : ${config.DEVICE_NAME}`);
-  console.log(`  Port    : ${config.PORT}`);
+  console.log(`  Bind    : ${config.BIND_ADDRESS}:${config.PORT}`);
   console.log(`  Storage : ${config.UPLOAD_DIR}`);
-  console.log(`  SMTP    : ${config.SMTP_HOST ? config.SMTP_HOST + ' (configured)' : 'not configured (codes in console)'}`);
+  console.log(`  SMTP    : ${config.SMTP_HOST ? config.SMTP_HOST + ' (configured)' : 'not configured'}`);
   console.log('========================================');
   console.log('  Access URLs:');
   console.log(`    Local  : http://localhost:${config.PORT}`);
@@ -622,6 +774,7 @@ const rl = readline.createInterface({
 function shutdown(signal) {
   console.log(`\n[Server] Received ${signal}, shutting down...`);
   discovery.stop();
+  // fileLock.cleanup();
   server.close();
   rl.close();
   process.exit(0);
@@ -632,15 +785,10 @@ function printHelp() {
   console.log('  可用命令:');
   console.log('    status        查看服务器状态');
   console.log('    users         查看注册用户');
-  console.log('    delete-user   注销用户');
-  console.log('    change-email  修改用户邮箱');
-  console.log('    moveto <路径>  迁移存储目录到新位置');
   console.log('    config        查看当前配置');
-  console.log('    --- 仓库管理 ---');
+  console.log('    --- 仓库浏览 ---');
   console.log('    ls [路径]     列出文件，默认根目录');
   console.log('    tree [路径]   树形展示目录结构');
-  console.log('    mkdir <路径>  创建目录');
-  console.log('    rm <路径>     删除文件或目录（需确认）');
   console.log('    du [路径]     统计磁盘占用');
   console.log('    info <路径>   查看文件/目录详情');
   console.log('    --- 系统 ---');
@@ -735,6 +883,7 @@ rl.on('line', async (line) => {
     case 'restart':
       console.log('[Server] Restarting...');
       discovery.stop();
+      // fileLock.cleanup();
       server.close();
       rl.close();
       const { exec } = require('child_process');
@@ -750,18 +899,6 @@ rl.on('line', async (line) => {
       repoCli.tree(args);
       console.log('');
       break;
-    case 'rm':
-      if (!args) { console.log('  用法: rm <路径>'); break; }
-      rl.question(`  确认删除 ${args}? (y/n) `, (ans) => {
-        if (ans.trim().toLowerCase() === 'y') repoCli.rm(args);
-        else console.log('  已取消');
-        rl.prompt();
-      });
-      return;
-    case 'mkdir':
-      if (!args) { console.log('  用法: mkdir <路径>'); break; }
-      repoCli.mkdir(args);
-      break;
     case 'du':
       repoCli.du(args);
       break;
@@ -769,36 +906,6 @@ rl.on('line', async (line) => {
       if (!args) { console.log('  用法: info <路径>'); break; }
       repoCli.info(args);
       break;
-    case 'delete-user':
-      rl.question('  请输入要注销的用户邮箱: ', async (email) => {
-        const e = email.trim();
-        if (!e) { console.log('  已取消'); rl.prompt(); return; }
-        const result = await userSystem.adminDeleteUser(e);
-        if (result.success) {
-          console.log(`  已注销用户: ${result.username} (${e})`);
-        } else {
-          console.log(`  错误: ${result.error}`);
-        }
-        rl.prompt();
-      });
-      return;
-    case 'change-email':
-      rl.question('  请输入原邮箱: ', (oldEmail) => {
-        const old = oldEmail.trim();
-        if (!old) { console.log('  已取消'); rl.prompt(); return; }
-        rl.question('  请输入新邮箱: ', async (newEmail) => {
-          const n = newEmail.trim();
-          if (!n) { console.log('  已取消'); rl.prompt(); return; }
-          const result = await userSystem.adminChangeEmail(old, n);
-          if (result.success) {
-            console.log(`  已修改: ${result.username} 的邮箱 ${result.oldEmail} -> ${result.newEmail}`);
-          } else {
-            console.log(`  错误: ${result.error}`);
-          }
-          rl.prompt();
-        });
-      });
-      return;
     default:
       console.log(`  未知命令: ${command}，输入 help 查看帮助`);
   }

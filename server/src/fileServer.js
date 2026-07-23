@@ -8,6 +8,8 @@
 const fs = require('fs');
 const path = require('path');
 const fsp = require('fs/promises');
+const zlib = require('zlib');
+const crypto = require('crypto');
 const config = require('./config');
 
 // 文件类型图标映射
@@ -27,13 +29,30 @@ class FileServer {
   }
 
   _ensureRoot() {
-    if (!fs.existsSync(this.uploadDir)) {
-      fs.mkdirSync(this.uploadDir, { recursive: true });
+    try {
+      if (!fs.existsSync(this.uploadDir)) {
+        fs.mkdirSync(this.uploadDir, { recursive: true });
+      }
+    } catch (e) {
+      // 目录存在但 ACL 损坏导致无法访问，尝试修复
+      if (e.code === 'EPERM') {
+        try {
+          fs.mkdirSync(this.uploadDir, { recursive: true });
+        } catch (_) {
+          console.error(`[FileServer] 无法访问存储目录: ${this.uploadDir}`);
+          console.error('[FileServer] 请以管理员身份运行: icacls "' + this.uploadDir + '" /reset /T /Q');
+          process.exit(1);
+        }
+      } else {
+        throw e;
+      }
     }
     // 确保 public/private 根目录存在
     ['public', 'private'].forEach(dir => {
       const p = path.join(this.uploadDir, dir);
-      if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+      try {
+        if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+      } catch (_) {}
     });
   }
 
@@ -41,6 +60,7 @@ class FileServer {
   async copyFromPublic(srcUserId, filePath, destUserId) {
     const srcAbs = this._buildPath(srcUserId, 'public', filePath);
     this._checkPath(srcAbs);
+    this._checkUserIsolation(srcAbs, srcUserId);
     if (!fs.existsSync(srcAbs)) throw new Error('文件不存在');
 
     const stat = await fsp.stat(srcAbs);
@@ -70,10 +90,21 @@ class FileServer {
     return fullPath;
   }
 
-  /** 安全检查：禁止访问存储根目录之外 */
+  /** 安全检查：禁止访问存储根目录之外，使用 path.relative 防止路径穿越 */
   _checkPath(absPath) {
     const root = path.resolve(this.uploadDir);
-    if (!absPath.startsWith(root)) {
+    const rel = path.relative(root, absPath);
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new Error('禁止访问该目录');
+    }
+  }
+
+  /** 用户隔离检查：验证路径中包含当前用户 ID，防止跨用户访问 */
+  _checkUserIsolation(absPath, userId) {
+    const root = path.resolve(this.uploadDir);
+    const rel = path.relative(root, absPath);
+    const segments = rel.split(path.sep);
+    if (segments.length < 2 || segments[1] !== userId) {
       throw new Error('禁止访问该目录');
     }
   }
@@ -105,6 +136,7 @@ class FileServer {
   async browse(userId, visibility, dirPath) {
     const absPath = this._buildPath(userId, visibility, dirPath);
     this._checkPath(absPath);
+    this._checkUserIsolation(absPath, userId);
 
     // 确保目录存在（用户首次访问时自动创建）
     if (!fs.existsSync(absPath)) {
@@ -154,6 +186,7 @@ class FileServer {
   async mkdir(userId, visibility, dirPath, name) {
     const absPath = this._buildPath(userId, visibility, dirPath);
     this._checkPath(absPath);
+    this._checkUserIsolation(absPath, userId);
     const newDir = path.join(absPath, name);
     this._checkPath(newDir);
     if (fs.existsSync(newDir)) throw new Error('文件夹已存在');
@@ -166,6 +199,7 @@ class FileServer {
   async delete(userId, visibility, targetPath) {
     const absPath = this._buildPath(userId, visibility, targetPath);
     this._checkPath(absPath);
+    this._checkUserIsolation(absPath, userId);
     if (!fs.existsSync(absPath)) throw new Error('文件不存在');
     const stat = await fsp.stat(absPath);
     if (stat.isDirectory()) {
@@ -180,6 +214,7 @@ class FileServer {
   async rename(userId, visibility, oldPath, newName) {
     const absOld = this._buildPath(userId, visibility, oldPath);
     this._checkPath(absOld);
+    this._checkUserIsolation(absOld, userId);
     const dir = path.dirname(absOld);
     const absNew = path.join(dir, newName);
     this._checkPath(absNew);
@@ -189,10 +224,39 @@ class FileServer {
     return { path: relNew, name: newName, visibility, userId };
   }
 
-  /** 创建下载流 */
+  /** 创建加密下载流：压缩 → AES-256-CTR 加密，密钥通过 Header 先于文件体发送 */
+  createEncryptedDownloadStream(userId, visibility, filePath) {
+    const absPath = this._buildPath(userId, visibility, filePath);
+    this._checkPath(absPath);
+    this._checkUserIsolation(absPath, userId);
+    const stat = fs.statSync(absPath);
+    const fileName = path.basename(absPath);
+
+    // 生成随机密钥（服务端持有，客户端通过 Header 接收）
+    const key = crypto.randomBytes(32); // AES-256
+    const iv = crypto.randomBytes(16);  // CTR 初始向量
+
+    const readStream = fs.createReadStream(absPath);
+    const gzip = zlib.createGzip();
+    const cipher = crypto.createCipheriv('aes-256-ctr', key, iv);
+
+    // 管道：原文件 → gzip 压缩 → AES 加密 → 响应
+    const stream = readStream.pipe(gzip).pipe(cipher);
+
+    return {
+      stream,
+      keyB64: key.toString('base64'),
+      ivB64: iv.toString('base64'),
+      fileName,
+      fileSize: stat.size,
+    };
+  }
+
+  /** 创建下载流（不加密，用于图片预览） */
   createDownloadStream(userId, visibility, filePath, range) {
     const absPath = this._buildPath(userId, visibility, filePath);
     this._checkPath(absPath);
+    this._checkUserIsolation(absPath, userId);
     const stat = fs.statSync(absPath);
     const fileSize = stat.size;
 
@@ -244,6 +308,7 @@ class FileServer {
         if (!userId) return cb(new Error('缺少 userId'), '');
         const absDir = this._buildPath(userId, visibility || 'private', dir || '');
         this._checkPath(absDir);
+        this._checkUserIsolation(absDir, userId);
         if (!fs.existsSync(absDir)) fs.mkdirSync(absDir, { recursive: true });
         cb(null, absDir);
       },

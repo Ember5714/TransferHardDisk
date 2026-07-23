@@ -368,6 +368,29 @@ function MainApp({ user, onLogout, pageMode, themeLabel, cycleTheme, theme }) {
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(null)
   const [previewFile, setPreviewFile] = useState(null)
+  const [previewUrl, setPreviewUrl] = useState(null)
+
+  // 图片预览时通过 fetch 获取 blob URL（不在 URL 中传 token）
+  useEffect(() => {
+    if (!previewFile) { setPreviewUrl(null); return }
+    let cancelled = false
+    const loadPreview = async () => {
+      let url
+      if (publicUser) {
+        url = `${API}/users/${publicUser.id}/public/download?path=${encodeURIComponent(previewFile.path)}`
+      } else {
+        url = `${API}/files/download?path=${encodeURIComponent(previewFile.path)}&visibility=${visibility}`
+      }
+      try {
+        const res = await api(url)
+        if (!res.ok) return
+        const blob = await res.blob()
+        if (!cancelled) setPreviewUrl(URL.createObjectURL(blob))
+      } catch (_) {}
+    }
+    loadPreview()
+    return () => { cancelled = true }
+  }, [previewFile])
   const [showUpload, setShowUpload] = useState(false)
   const [showNewFolder, setShowNewFolder] = useState(false)
   const [renameTarget, setRenameTarget] = useState(null)
@@ -421,6 +444,7 @@ function MainApp({ user, onLogout, pageMode, themeLabel, cycleTheme, theme }) {
 
   // 设置
   const [showSettings, setShowSettings] = useState(false)
+  const [showAbout, setShowAbout] = useState(false)
   const [currentUser, setCurrentUser] = useState(user) // 动态更新用户信息
 
   const toast = useCallback((msg, type = 'info') => {
@@ -516,20 +540,65 @@ function MainApp({ user, onLogout, pageMode, themeLabel, cycleTheme, theme }) {
     else setSelected([...items])
   }
 
-  const downloadFile = (item) => {
+  const downloadFile = async (item) => {
     if (item.isDir) return
-    const token = localStorage.getItem('token')
     let url
     if (publicUser) {
-      url = `${API}/users/${publicUser.id}/public/download?path=${encodeURIComponent(item.path)}`
+      url = `${API}/users/${publicUser.id}/public/download-encrypted?path=${encodeURIComponent(item.path)}`
     } else {
-      url = `${API}/files/download?path=${encodeURIComponent(item.path)}&visibility=${visibility}`
+      url = `${API}/files/download-encrypted?path=${encodeURIComponent(item.path)}&visibility=${visibility}`
     }
-    const a = document.createElement('a')
-    a.href = url + (token ? `&token=${token}` : '')
-    a.download = item.name
-    document.body.appendChild(a); a.click()
-    document.body.removeChild(a)
+
+    try {
+      const response = await api(url)
+      if (!response.ok) {
+        const err = await response.text()
+        toast('下载失败: ' + (err || `HTTP ${response.status}`), 'error')
+        return
+      }
+
+      const encKeyB64 = response.headers.get('X-Enc-Key')
+      const encIvB64 = response.headers.get('X-Enc-IV')
+      const originalName = decodeURIComponent(
+        response.headers.get('X-Enc-Original-Name') || item.name
+      )
+
+      if (!encKeyB64 || !encIvB64) {
+        toast('下载失败: 缺少加密密钥', 'error')
+        return
+      }
+
+      // Base64 → Uint8Array
+      const keyBytes = Uint8Array.from(atob(encKeyB64), c => c.charCodeAt(0))
+      const ivBytes = Uint8Array.from(atob(encIvB64), c => c.charCodeAt(0))
+      const encryptedData = await response.arrayBuffer()
+
+      // AES-256-CTR 解密
+      const cryptoKey = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-CTR' }, false, ['decrypt'])
+      const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-CTR', counter: ivBytes, length: 128 },
+        cryptoKey,
+        encryptedData
+      )
+
+      // Gzip 解压
+      const ds = new DecompressionStream('gzip')
+      const writer = ds.writable.getWriter()
+      writer.write(decrypted)
+      writer.close()
+      const decompressed = await new Response(ds.readable).arrayBuffer()
+
+      // 触发浏览器保存
+      const blob = new Blob([decompressed])
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = originalName
+      document.body.appendChild(a); a.click()
+      document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+    } catch (err) {
+      toast('下载失败: ' + err.message, 'error')
+    }
   }
 
   const copyToMyWarehouse = async (item) => {
@@ -549,14 +618,6 @@ function MainApp({ user, onLogout, pageMode, themeLabel, cycleTheme, theme }) {
     if (item.isDir) return enterDir(item)
     if (item.category === 'image') setPreviewFile(item)
     else downloadFile(item)
-  }
-
-  const getPreviewUrl = (item) => {
-    const token = localStorage.getItem('token')
-    if (publicUser) {
-      return `${API}/users/${publicUser.id}/public/download?path=${encodeURIComponent(item.path)}&token=${token}`
-    }
-    return `${API}/files/download?path=${encodeURIComponent(item.path)}&visibility=${visibility}&token=${token}`
   }
 
   const deleteItems = async (targets) => {
@@ -614,7 +675,11 @@ function MainApp({ user, onLogout, pageMode, themeLabel, cycleTheme, theme }) {
       await new Promise((resolve, reject) => {
         xhr.open('POST', `${API}/files/upload`)
         xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('token')}`)
-        xhr.onload = () => { if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText)); else reject(new Error(`HTTP ${xhr.status}`)) }
+        xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) { resolve(JSON.parse(xhr.responseText)); return }
+            try { const d = JSON.parse(xhr.responseText); reject(new Error(d.error || `HTTP ${xhr.status}`)) }
+            catch { reject(new Error(`HTTP ${xhr.status}`)) }
+          }
         xhr.onerror = () => reject(new Error('连接失败'))
         xhr.ontimeout = () => reject(new Error('超时'))
         xhr.timeout = 0
@@ -939,7 +1004,7 @@ function MainApp({ user, onLogout, pageMode, themeLabel, cycleTheme, theme }) {
               {previewFile && (
                 <Modal onClose={() => setPreviewFile(null)} title={previewFile.name} wide>
                   <div className="preview-container">
-                    <img src={getPreviewUrl(previewFile)} alt={previewFile.name} className="preview-img" />
+                    <img src={previewUrl} alt={previewFile.name} className="preview-img" />
                     <div className="preview-info">
                       <span>{previewFile.name}</span>
                       <span>{formatSize(previewFile.size)}</span>
@@ -1009,7 +1074,16 @@ function MainApp({ user, onLogout, pageMode, themeLabel, cycleTheme, theme }) {
                 type="text"
                 placeholder="搜索公开用户..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value)
+                  if (!e.target.value.trim()) {
+                    setSearchError('')
+                    setSearchResults([])
+                  } else if (searchResults.length > 0 || searchError) {
+                    setSearchError('')
+                    setSearchResults([])
+                  }
+                }}
                 onFocus={() => setSearchFocused(true)}
               />
               <button className="search-btn" type="submit" disabled={searching}>搜索</button>
@@ -1025,7 +1099,7 @@ function MainApp({ user, onLogout, pageMode, themeLabel, cycleTheme, theme }) {
                   <div key={i} className="search-result-item search-history-item" onMouseDown={(e) => { e.preventDefault(); handleSearch(null, q) }}>
                     <span className="search-history-icon">~</span>
                     <span className="search-result-name">{q}</span>
-                    <button className="btn-link btn-link-sm search-history-del" onClick={(e) => {
+                    <button className="btn-link btn-link-sm search-history-del" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => {
                       e.stopPropagation()
                       setSearchHistory((prev) => {
                         const next = prev.filter((_, j) => j !== i)
@@ -1195,7 +1269,7 @@ function MainApp({ user, onLogout, pageMode, themeLabel, cycleTheme, theme }) {
           {previewFile && (
             <Modal onClose={() => setPreviewFile(null)} title={previewFile.name} wide>
               <div className="preview-container">
-                <img src={getPreviewUrl(previewFile)} alt={previewFile.name} className="preview-img" />
+                <img src={previewUrl} alt={previewFile.name} className="preview-img" />
                 <div className="preview-info">
                   <span>{previewFile.name}</span>
                   <span>{formatSize(previewFile.size)}</span>
@@ -1217,6 +1291,37 @@ function MainApp({ user, onLogout, pageMode, themeLabel, cycleTheme, theme }) {
           onDeleteAccount={handleDeleteAccount}
           onClose={() => setShowSettings(false)}
         />
+      )}
+      {/* 页脚 */}
+      <footer className="app-footer">
+        <span className="footer-link" onClick={() => setShowAbout(true)}>关于</span>
+      </footer>
+      {showAbout && (
+        <Modal onClose={() => setShowAbout(false)} title="关于 Transfer Hard Disk">
+          <div className="about-content">
+            <div className="about-section">
+              <h3 className="about-label">源码地址</h3>
+              <a className="about-link" href="https://github.com/Ember5714/TransferHardDisk" target="_blank" rel="noopener noreferrer">
+                github.com/Ember5714/TransferHardDisk
+              </a>
+            </div>
+            <div className="about-section">
+              <h3 className="about-label">社交媒体</h3>
+              <div className="about-links">
+                <a className="about-link" href="https://space.bilibili.com/3493086938270254" target="_blank" rel="noopener noreferrer">
+                  bilibili: @Ember5714
+                </a>
+                <a className="about-link" href="https://www.douyin.com/user/MS4wLjABAAAARFMQwKlxUI_B0j0cQwzbeJbZKuBI5QuyesZLXgKdD1w" target="_blank" rel="noopener noreferrer">
+                  抖音: @Ember5714
+                </a>
+              </div>
+            </div>
+            <div className="about-section">
+              <h3 className="about-label">作者</h3>
+              <span className="about-text">Ember5714</span>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   )

@@ -5,6 +5,8 @@ const ROOT_DIR = path.join(__dirname, '..', '..');
 
 module.exports = {
   PORT: process.env.PORT || 3000,
+  // 绑定地址：默认仅本机，设为 0.0.0.0 可暴露给局域网
+  BIND_ADDRESS: process.env.BIND_ADDRESS || '127.0.0.1',
   DEVICE_NAME: process.env.DEVICE_NAME || os.hostname(),
   DEVICE_ID: process.env.DEVICE_ID || require('uuid').v4(),
   UPLOAD_DIR: process.env.UPLOAD_DIR || path.join(ROOT_DIR, 'file'),

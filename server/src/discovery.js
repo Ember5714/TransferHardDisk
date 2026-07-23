@@ -1,15 +1,39 @@
 /**
  * 设备发现模块 — 按子网定向 UDP 广播 + mDNS 辅助
  * 关键修复：不依赖 255.255.255.255，而是向每个网卡的子网广播地址发送
+ * 安全：UDP 消息附加 HMAC-SHA256 签名，防止伪造
  */
 const dgram = require('dgram');
 const os = require('os');
+const crypto = require('crypto');
 const EventEmitter = require('events');
 const config = require('./config');
 
 const BROADCAST_PORT = 3001;
 const BROADCAST_INTERVAL = 5000;
 const DEVICE_TIMEOUT = 15000;
+
+// 使用 DEVICE_ID 的 SHA-256 哈希作为 HMAC 密钥
+function getHMACKey() {
+  return crypto.createHash('sha256').update(config.DEVICE_ID).digest();
+}
+
+function signMessage(payload) {
+  const json = JSON.stringify(payload);
+  const hmac = crypto.createHmac('sha256', getHMACKey()).update(json).digest('hex');
+  return { payload: json, sig: hmac };
+}
+
+function verifyMessage(data) {
+  try {
+    const { payload, sig } = JSON.parse(data.toString('utf8'));
+    if (!payload || !sig) return null;
+    const expected = crypto.createHmac('sha256', getHMACKey()).update(payload).digest('hex');
+    // 使用 timingSafeEqual 防止时序攻击
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+    return JSON.parse(payload);
+  } catch { return null; }
+}
 
 class Discovery extends EventEmitter {
   constructor() {
@@ -134,13 +158,13 @@ class Discovery extends EventEmitter {
 
   _broadcastPresence() {
     if (!this.socket) return;
-    const message = JSON.stringify({
+    const signed = signMessage({
       type: 'hello',
       id: config.DEVICE_ID,
       name: config.DEVICE_NAME,
       port: this.port,
     });
-    const buf = Buffer.from(message, 'utf8');
+    const buf = Buffer.from(JSON.stringify(signed), 'utf8');
 
     // 向每个子网广播地址分别发送
     for (const addr of this._broadcastAddrs) {
@@ -152,49 +176,46 @@ class Discovery extends EventEmitter {
 
   _sendGoodbye() {
     if (!this.socket) return;
-    const message = JSON.stringify({ type: 'goodbye', id: config.DEVICE_ID });
-    const buf = Buffer.from(message, 'utf8');
+    const signed = signMessage({ type: 'goodbye', id: config.DEVICE_ID });
+    const buf = Buffer.from(JSON.stringify(signed), 'utf8');
     for (const addr of this._broadcastAddrs) {
       this.socket.send(buf, 0, buf.length, BROADCAST_PORT, addr);
     }
   }
 
   _handleMessage(msg, rinfo) {
-    try {
-      const data = JSON.parse(msg.toString('utf8'));
-      if (data.id === config.DEVICE_ID) return;
+    const data = verifyMessage(msg);
+    if (!data) return; // 签名无效，丢弃
+    if (data.id === config.DEVICE_ID) return;
 
-      // 放宽子网检查：只要对方不是 127.x.x.x 就接受
-      if (rinfo.address.startsWith('127.')) return;
+    // 放宽子网检查：只要对方不是 127.x.x.x 就接受
+    if (rinfo.address.startsWith('127.')) return;
 
-      if (data.type === 'hello') {
-        const isNew = !this.devices.has(data.id);
-        this.devices.set(data.id, {
-          id: data.id,
-          name: data.name || 'Unknown',
-          address: rinfo.address,
-          port: data.port || this.port,
-          lastSeen: Date.now(),
+    if (data.type === 'hello') {
+      const isNew = !this.devices.has(data.id);
+      this.devices.set(data.id, {
+        id: data.id,
+        name: data.name || 'Unknown',
+        address: rinfo.address,
+        port: data.port || this.port,
+        lastSeen: Date.now(),
+      });
+
+      if (isNew) {
+        console.log(`[Discovery] Found (UDP): ${data.name} @ ${rinfo.address}:${data.port}`);
+        this.emit('device-online', {
+          id: data.id, name: data.name, address: rinfo.address, port: data.port || this.port,
         });
-
-        if (isNew) {
-          console.log(`[Discovery] Found (UDP): ${data.name} @ ${rinfo.address}:${data.port}`);
-          this.emit('device-online', {
-            id: data.id, name: data.name, address: rinfo.address, port: data.port || this.port,
-          });
-        } else {
-          this.devices.get(data.id).lastSeen = Date.now();
-        }
-      } else if (data.type === 'goodbye') {
-        if (this.devices.has(data.id)) {
-          const d = this.devices.get(data.id);
-          console.log(`[Discovery] Offline (UDP): ${d.name}`);
-          this.devices.delete(data.id);
-          this.emit('device-offline', { id: data.id, name: d.name });
-        }
+      } else {
+        this.devices.get(data.id).lastSeen = Date.now();
       }
-    } catch (e) {
-      // ignore non-JSON
+    } else if (data.type === 'goodbye') {
+      if (this.devices.has(data.id)) {
+        const d = this.devices.get(data.id);
+        console.log(`[Discovery] Offline (UDP): ${d.name}`);
+        this.devices.delete(data.id);
+        this.emit('device-offline', { id: data.id, name: d.name });
+      }
     }
   }
 

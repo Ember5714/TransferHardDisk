@@ -1233,3 +1233,71 @@ body {
   .md-split { flex-direction: column; min-height: 400px; }
   .md-split-pane { min-height: 180px; }
 }
+
+/* ============ Footer ============ */
+.app-footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px 0 8px;
+  margin-top: 24px;
+  border-top: 1px solid var(--border-light);
+}
+
+.footer-link {
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s;
+  user-select: none;
+}
+
+.footer-link:hover {
+  color: var(--brand);
+}
+
+/* ============ About Modal ============ */
+.about-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.about-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.about-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0;
+}
+
+.about-link {
+  display: block;
+  font-size: 14px;
+  color: var(--brand);
+  text-decoration: none;
+  padding: 6px 0;
+  transition: opacity 0.15s;
+}
+
+.about-link:hover {
+  opacity: 0.8;
+}
+
+.about-text {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.about-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

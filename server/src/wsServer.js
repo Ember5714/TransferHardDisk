@@ -15,6 +15,15 @@ class WsServer {
     const WebSocket = require('ws');
     this.wss = new WebSocket.Server({ server });
 
+    // 阻止 HTTP 服务器的错误被 ws 库重新抛出为未捕获异常
+    this.wss.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        // HTTP server error handler will handle this
+      } else {
+        console.error('[WS] Server error:', err.message);
+      }
+    });
+
     this.wss.on('connection', (ws, req) => {
       const clientId = crypto.randomUUID();
       const clientIp = req.socket.remoteAddress;
