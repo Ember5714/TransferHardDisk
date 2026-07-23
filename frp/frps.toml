@@ -6,8 +6,8 @@
 bindAddr = "0.0.0.0"
 bindPort = 7000
 
-# 认证 Token（与 frpc 端保持一致）
-auth.token = "your-shared-token-here"
+# 认证 Token（与 frpc 端保持一致，已自动生成强随机值）
+auth.token = "34363f75952603f1110df4be3c6aae8209a870fd7373f7fbac235cf664941efe"
 
 # 允许的端口范围
 allowPorts = [
@@ -15,11 +15,11 @@ allowPorts = [
   { start = 8000, end = 9000 }
 ]
 
-# 仪表盘
-webServer.addr = "0.0.0.0"
+# 仪表盘（仅本机访问，已自动生成强密码）
+webServer.addr = "127.0.0.1"
 webServer.port = 7500
 webServer.user = "admin"
-webServer.password = "admin"
+webServer.password = "d94852bf62f3980d05578bab9692e784"
 
 # 日志
 log.to = "./frps.log"
